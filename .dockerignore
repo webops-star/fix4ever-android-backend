@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+npm-debug.log
+.idea
+__pycache__
+*.log
+Dockerfile
+docker-compose.yml
