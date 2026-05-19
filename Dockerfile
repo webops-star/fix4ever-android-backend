@@ -17,6 +17,9 @@ RUN npm ci
 # COPY .env .env # uncomment when running locally 
 COPY . .
 
+# Ensure public folder exists
+RUN mkdir -p public/temp
+
 # Build TypeScript to /usr/src/app/dist
 RUN npm run build
 
@@ -53,8 +56,6 @@ RUN npm ci --omit=dev
 COPY --from=builder /usr/src/app/dist ./dist
 COPY --from=builder /usr/src/app/public ./public
 COPY --from=builder /usr/src/app/src/directRoutes.js ./src/directRoutes.js
-# Copy .env from the builder stage into the runtime image so dotenv.config() can read it
-# COPY --from=builder /usr/src/app/.env .env
 
 ENV NODE_ENV=production
 ENV PORT=8080
