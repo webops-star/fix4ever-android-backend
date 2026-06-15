@@ -8782,3 +8782,83 @@ export const simulateReadyForPayment = async (req: AuthRequest, res: Response) =
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+/**
+ * Customer Action: Raise a Warranty Claim
+ */
+export const raiseWarrantyClaim = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { isSameIssue, issueDescription } = req.body;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    const originalRequest = await ServiceRequest.findById(id);
+    if (!originalRequest) {
+      return res.status(404).json({ success: false, message: 'Service request not found' });
+    }
+
+    if (originalRequest.customerId.toString() !== userId) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    if (originalRequest.warrantyStatus !== 'active') {
+      return res.status(400).json({ success: false, message: 'Warranty is not active or has expired' });
+    }
+
+    if (new Date() > new Date(originalRequest.warrantyEndDate)) {
+      originalRequest.warrantyStatus = 'expired';
+      await originalRequest.save();
+      return res.status(400).json({ success: false, message: 'Your service warranty has expired. Please create a new service request.' });
+    }
+
+    if (!isSameIssue) {
+      // If different issue, reject warranty and ask to create new request
+      return res.status(400).json({ 
+        success: false, 
+        message: 'This appears to be a different issue from the original repair. It will be treated as a new service request and charges may apply after diagnosis.',
+        action: 'create_new_request'
+      });
+    }
+
+    // Mark current request as claim raised
+    originalRequest.warrantyStatus = 'claim_raised';
+    originalRequest.claimVerificationStatus = 'pending';
+    
+    // Create the actual claim request
+    const claimRequest = new ServiceRequest({
+      customerId: userId,
+      requestType: originalRequest.requestType,
+      serviceType: originalRequest.serviceType,
+      address: originalRequest.address,
+      customerLocation: originalRequest.customerLocation,
+      city: originalRequest.city,
+      brand: originalRequest.brand,
+      model: originalRequest.model,
+      problemDescription: issueDescription || 'Warranty Claim: Same issue reported',
+      category: originalRequest.category,
+      deviceType: originalRequest.deviceType,
+      status: 'Pending', // pending admin/vendor acceptance
+      claimId: (originalRequest as any)._id.toString(), // points back to original request
+      paymentStatus: 'pending',
+    });
+
+    await claimRequest.save();
+
+    originalRequest.claimId = (claimRequest as any)._id.toString();
+    await originalRequest.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Your warranty claim is eligible for service charge waiver after verification. Any parts or additional charges, if required, will be shared before work starts.',
+      data: { claimId: (claimRequest as any)._id }
+    });
+
+  } catch (error: any) {
+    console.error('Raise warranty claim error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to raise warranty claim', error: error.message });
+  }
+};

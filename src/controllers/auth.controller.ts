@@ -388,20 +388,27 @@ export const login = async (req: Request, res: Response) => {
     if (!isPasswordValid) {
       return res.status(401).json({ message: 'Invalid password.' });
     }
-    const recentOtp = await OTP.find({ email }).sort({ createdAt: -1 }).limit(1);
 
-    if (recentOtp.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'No OTP found. Please request a new one.',
-      });
-    }
+    // PLAY STORE BYPASS
+    if (email === 'webops@fix4ever.com' && otp === '123456') {
+      console.log('Play Store review bypass: Login successful for test account.');
+      // Skip DB check and fall through to token generation
+    } else {
+      const recentOtp = await OTP.find({ email }).sort({ createdAt: -1 }).limit(1);
 
-    if (recentOtp[0].otp !== otp) {
-      return res.status(400).json({
-        success: false,
-        message: 'This OTP is not valid.',
-      });
+      if (recentOtp.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No OTP found. Please request a new one.',
+        });
+      }
+
+      if (recentOtp[0].otp !== otp) {
+        return res.status(400).json({
+          success: false,
+          message: 'This OTP is not valid.',
+        });
+      }
     }
 
     const token = jwt.sign(
@@ -1157,5 +1164,148 @@ export const refreshAccessToken = async (req: Request, res: Response) => {
       return res.status(401).json({ success: false, message: 'Refresh token expired. Please log in again.', error: 'REFRESH_TOKEN_EXPIRED' });
     }
     return res.status(401).json({ success: false, message: 'Invalid refresh token.', error: 'REFRESH_TOKEN_INVALID' });
+  }
+};
+
+/**
+ * POST /api/auth/google/native
+ * Verifies a Google idToken from the native mobile SDK.
+ * - If user exists: returns JWT immediately.
+ * - If new user, no phone: returns { isNewUser: true, prefillName, prefillEmail } so the app
+ *   can show the complete-profile form.
+ * - If new user + phone + username provided: creates the account and returns JWT.
+ */
+export const googleNativeAuth = async (req: Request, res: Response) => {
+  try {
+    const { idToken, phone, username } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({ success: false, message: 'idToken is required.' });
+    }
+
+    if (!process.env.GOOGLE_CLIENT_ID) {
+      return res.status(500).json({ success: false, message: 'Google Sign-In is not configured on the server. Set GOOGLE_CLIENT_ID in the backend .env file.' });
+    }
+
+    // Verify the Google idToken using google-auth-library
+    const { OAuth2Client } = await import('google-auth-library');
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+    let googlePayload: any;
+    try {
+      const ticket = await client.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      googlePayload = ticket.getPayload();
+    } catch (verifyError: any) {
+      console.error('Google idToken verification failed:', verifyError.message);
+      return res.status(401).json({ success: false, message: 'Invalid Google token. Please try again.' });
+    }
+
+    const { name: googleName, email: googleEmail } = googlePayload;
+
+    if (!googleEmail) {
+      return res.status(400).json({ success: false, message: 'Could not retrieve email from Google account.' });
+    }
+
+    // Look up existing user
+    const existingUser = await User.findOne({ email: googleEmail });
+
+    if (existingUser) {
+      // Existing user — issue JWT and return immediately
+      const jwtToken = jwt.sign(
+        {
+          id: existingUser._id,
+          email: existingUser.email,
+          username: existingUser.username,
+          role: existingUser.role || 'user',
+          phone: existingUser.phone,
+        },
+        process.env.JWT_SECRET!,
+        { expiresIn: '7d' }
+      );
+      const refreshToken = jwt.sign(
+        { id: existingUser._id, email: existingUser.email, type: 'refresh' },
+        process.env.JWT_SECRET!,
+        { expiresIn: '30d' }
+      );
+      return res.json({
+        success: true,
+        token: jwtToken,
+        refreshToken,
+        user: {
+          _id: existingUser._id,
+          username: existingUser.username,
+          email: existingUser.email,
+          phone: existingUser.phone,
+          role: existingUser.role,
+        },
+      });
+    }
+
+    // New user — if no phone provided yet, ask the app to show the complete-profile form
+    if (!phone) {
+      return res.json({
+        success: true,
+        isNewUser: true,
+        prefillName: googleName || '',
+        prefillEmail: googleEmail,
+      });
+    }
+
+    // New user completing profile — validate inputs
+    const cleanPhone = phone.trim();
+    if (!/^\d{10}$/.test(cleanPhone)) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit phone number.' });
+    }
+
+    const phoneInUse = await User.findOne({ phone: cleanPhone });
+    if (phoneInUse) {
+      return res.status(400).json({ success: false, message: 'This phone number is already registered with another account.' });
+    }
+
+    const finalName = (username?.trim()) || googleName || 'User';
+
+    const newUser = await User.create({
+      username: finalName,
+      email: googleEmail,
+      phone: cleanPhone,
+      password: 'google_oauth', // placeholder — cannot be used for password login
+      role: 'user',
+    });
+
+    const jwtToken = jwt.sign(
+      {
+        id: newUser._id,
+        email: newUser.email,
+        username: newUser.username,
+        role: newUser.role || 'user',
+        phone: newUser.phone,
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '7d' }
+    );
+    const refreshToken = jwt.sign(
+      { id: newUser._id, email: newUser.email, type: 'refresh' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '30d' }
+    );
+
+    return res.json({
+      success: true,
+      token: jwtToken,
+      refreshToken,
+      user: {
+        _id: newUser._id,
+        username: newUser.username,
+        email: newUser.email,
+        phone: newUser.phone,
+        role: newUser.role,
+      },
+    });
+  } catch (error: any) {
+    console.error('googleNativeAuth error:', error);
+    return res.status(500).json({ success: false, message: 'Authentication failed. Please try again.' });
   }
 };

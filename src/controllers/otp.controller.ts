@@ -146,6 +146,16 @@ export const sendLoginOTP = async (req: Request, res: Response) => {
       });
     }
 
+    // PLAY STORE BYPASS
+    if (email === 'webops@fix4ever.com') {
+      console.log('Play Store review bypass: Skipping actual OTP generation/email for test account.');
+      return res.status(200).json({
+        success: true,
+        message: 'OTP sent successfully to your email.',
+        data: { email },
+      });
+    }
+
     let otp = otpGenerator.generate(6, {
       upperCaseAlphabets: false,
       lowerCaseAlphabets: false,

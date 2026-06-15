@@ -307,6 +307,30 @@ const ServiceRequestSchema: Schema = new Schema({
   paymentReceipt: { type: String }, // Receipt URL after vendor approval
   paymentNotes: { type: String }, // Any notes from vendor about payment
 
+  // Warranty Add-on System
+  warrantyAddonSelected: { type: Boolean, default: false },
+  warrantyPlanName: {
+    type: String,
+    enum: ['1 Month', '2 Months', '3 Months', 'None'],
+    default: 'None',
+  },
+  warrantyAmount: { type: Number, default: 0 },
+  warrantyValidityDays: { type: Number, default: 0 },
+  warrantyStartDate: { type: Date },
+  warrantyEndDate: { type: Date },
+  warrantyStatus: {
+    type: String,
+    enum: ['not_purchased', 'pending_activation', 'active', 'expired', 'claim_raised', 'void'],
+    default: 'not_purchased',
+  },
+  claimVerificationStatus: {
+    type: String,
+    enum: ['pending', 'approved_same_issue', 'rejected_new_issue', 'chargeable', 'none'],
+    default: 'none',
+  },
+  claimId: { type: String }, // Reference to a new service request if this is a warranty claim
+  serviceChargeWaived: { type: Boolean, default: false },
+
   // Verification data for unknown problems
   verificationData: {
     deviceSymptoms: { type: String },

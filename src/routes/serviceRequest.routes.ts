@@ -75,6 +75,7 @@ import {
   respondOnsiteConsent,
   submitOnsiteSlot,
   adminReviewOnsiteSlot,
+  raiseWarrantyClaim,
 } from '../controllers/serviceRequest.controller';
 import { downloadInvoice } from '../controllers/invoice.controller';
 import { createNotification } from '../controllers/notification.controller';
@@ -176,6 +177,7 @@ router.patch('/:id/mark-captain-pickup-done', authenticateToken, markCaptainPick
 router.patch('/:id/start-delivery', authenticateToken, startDelivery);
 router.patch('/:id/mark-drop-delivered', authenticateToken, markDropDelivered);
 router.post('/:id/submit-problem-identification', authenticateToken, submitProblemIdentification);
+router.post('/:id/warranty-claim', authenticateToken, raiseWarrantyClaim);
 // NEW: Admin reviews vendor identification and sets customer price
 router.post(
   '/:requestId/admin-review-identification',

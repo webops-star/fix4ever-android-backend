@@ -18,21 +18,19 @@ import mongoose from 'mongoose';
 import { creditTechnicianWallet } from '../utils/walletService';
 import { validateCoupon, applyCoupon } from '../utils/couponService';
 
-// Helper function to calculate base amount (without GST)
 const calculateBaseAmount = (serviceRequest: any): number => {
+  let baseAmount = 0;
+
   // PRIORITY 1: If paymentBreakdown exists (admin has set final price), use totalCost
   if (serviceRequest.paymentBreakdown && serviceRequest.paymentBreakdown.totalCost > 0) {
-    return serviceRequest.paymentBreakdown.totalCost;
+    baseAmount = serviceRequest.paymentBreakdown.totalCost;
   }
-
   // PRIORITY 2: If admin has set a final price, use that directly
-  if (serviceRequest.adminFinalPrice && serviceRequest.adminFinalPrice > 0) {
-    return serviceRequest.adminFinalPrice;
+  else if (serviceRequest.adminFinalPrice && serviceRequest.adminFinalPrice > 0) {
+    baseAmount = serviceRequest.adminFinalPrice;
   }
-
   // PRIORITY 3: Calculate from pricing estimates if no admin price set yet
-  let baseAmount = 0;
-  if (serviceRequest.calculatedPricing) {
+  else if (serviceRequest.calculatedPricing) {
     if (serviceRequest.calculatedPricing.finalChargeRange) {
       // Use the average of min and max from final charge range
       baseAmount =
@@ -57,6 +55,11 @@ const calculateBaseAmount = (serviceRequest: any): number => {
   // PRIORITY 4: Fall back to vendor service charge or estimated cost
   if (baseAmount === 0) {
     baseAmount = serviceRequest.vendorServiceCharge || serviceRequest.estimatedCost || 0;
+  }
+
+  // Add extended warranty cost if selected (tax will be applied in calculateTotalPaymentAmount)
+  if (serviceRequest.warrantyAddonSelected && serviceRequest.warrantyAmount > 0) {
+    baseAmount += serviceRequest.warrantyAmount;
   }
 
   return Math.max(baseAmount, 0);
@@ -105,6 +108,10 @@ export const createCustomerPayment = async (req: AuthRequest, res: Response) => 
       customerNotes,
       walletAmount: rawWalletAmount,
       couponCode: rawCouponCode,
+      warrantyAddonSelected,
+      warrantyPlanName,
+      warrantyAmount,
+      warrantyValidityDays,
     } = req.body;
     const paymentProvider = 'cashfree'; // Always use Cashfree as payment gateway
 
@@ -162,6 +169,26 @@ export const createCustomerPayment = async (req: AuthRequest, res: Response) => 
         success: false,
         message: 'Service request not found',
       });
+    }
+    // Handle Warranty Addon if selected
+    if (warrantyAddonSelected && warrantyAmount > 0) {
+      // Validate plan amounts based on requirements
+      const isValidPlan = 
+        (warrantyPlanName === '1 Month' && warrantyAmount === 399) ||
+        (warrantyPlanName === '2 Months' && warrantyAmount === 699) ||
+        (warrantyPlanName === '3 Months' && warrantyAmount === 999);
+        
+      if (isValidPlan) {
+        serviceRequest.warrantyAddonSelected = true;
+        serviceRequest.warrantyPlanName = warrantyPlanName;
+        serviceRequest.warrantyAmount = warrantyAmount;
+        serviceRequest.warrantyValidityDays = warrantyValidityDays;
+        serviceRequest.warrantyStatus = 'pending_activation';
+        
+        await serviceRequest.save();
+      } else {
+        console.warn('Invalid warranty plan details provided:', { warrantyPlanName, warrantyAmount });
+      }
     }
 
     // Calculate the correct total amount (admin price + GST if applicable)
@@ -1216,11 +1243,21 @@ export async function processPaymentSuccess(
     await transaction.save();
 
     // Update service request status (idempotent)
-    await ServiceRequest.findByIdAndUpdate(transaction.serviceRequestId, {
+    const updateQuery: any = {
       paymentStatus: 'completed',
       status: 'Completed',
       paymentTransactionId: transaction._id.toString(),
-    });
+    };
+
+    if (serviceRequest.warrantyStatus === 'pending_activation') {
+      updateQuery.warrantyStatus = 'active';
+      updateQuery.warrantyStartDate = new Date();
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() + (serviceRequest.warrantyValidityDays || 30));
+      updateQuery.warrantyEndDate = endDate;
+    }
+
+    await ServiceRequest.findByIdAndUpdate(transaction.serviceRequestId, updateQuery);
 
     // ── Referral & Coupon post-payment hooks (non-blocking) ──────────────────
     if (!wasAlreadyCompleted) {

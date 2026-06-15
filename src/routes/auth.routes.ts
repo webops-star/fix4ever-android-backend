@@ -9,6 +9,7 @@ import {
   updatePassword,
   googleLogin,
   googleCallback,
+  googleNativeAuth,
   updateUserRole,
   WorkSpaceOTPVerify,
   refreshAccessToken,
@@ -47,5 +48,6 @@ router.post('/update-password', authenticateToken, updatePassword);
 router.put('/update-role', authenticateToken, updateUserRole);
 router.get('/google/login', googleLogin);
 router.get('/google/callback', googleCallback);
+router.post('/google/native', googleNativeAuth);
 
 export default router;
