@@ -91,8 +91,8 @@ const corsOptions = {
       'http://localhost:8080',
     ];
 
-    // Allow requests with no origin (mobile apps, Postman, webhooks, etc.)
-    if (!origin) return callback(null, true);
+    // Allow requests with no origin, null origin, or file:// (mobile apps, Postman, webhooks, etc.)
+    if (!origin || origin === 'null' || origin.startsWith('file://')) return callback(null, true);
 
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
