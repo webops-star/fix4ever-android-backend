@@ -1309,3 +1309,22 @@ export const googleNativeAuth = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: 'Authentication failed. Please try again.' });
   }
 };
+
+/**
+ * Delete user account permanently
+ */
+export const deleteAccount = async (req: AuthMiddlewareRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+    await User.findByIdAndDelete(userId);
+    res.clearCookie('token');
+    return res.status(200).json({ success: true, message: 'Account deleted successfully' });
+  } catch (error: any) {
+    console.error('deleteAccount error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Failed to delete account' });
+  }
+};
+

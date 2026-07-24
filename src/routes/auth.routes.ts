@@ -13,6 +13,7 @@ import {
   updateUserRole,
   WorkSpaceOTPVerify,
   refreshAccessToken,
+  deleteAccount,
 } from '../controllers/auth.controller';
 import {
   sendOTP,
@@ -46,6 +47,7 @@ router.get('/profile', authenticateToken, getProfile);
 router.put('/update-profile', authenticateToken, updateProfile);
 router.post('/update-password', authenticateToken, updatePassword);
 router.put('/update-role', authenticateToken, updateUserRole);
+router.delete('/delete-account', authenticateToken, deleteAccount);
 router.get('/google/login', googleLogin);
 router.get('/google/callback', googleCallback);
 router.post('/google/native', googleNativeAuth);
