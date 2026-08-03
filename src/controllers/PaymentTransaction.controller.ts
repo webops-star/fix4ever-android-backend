@@ -65,24 +65,26 @@ const calculateBaseAmount = (serviceRequest: any): number => {
   return Math.max(baseAmount, 0);
 };
 
-// Helper function to calculate total payment amount (with GST if admin has set price)
+// Helper function to calculate total payment amount.
+// The admin's final price (and the customer's warranty add-on) are GST-inclusive —
+// GST is extracted from that amount for the invoice breakdown, never added on top of it.
 const calculateTotalPaymentAmount = (
   serviceRequest: any
 ): { baseAmount: number; gstAmount: number; totalAmount: number } => {
-  const baseAmount = calculateBaseAmount(serviceRequest);
+  const amount = calculateBaseAmount(serviceRequest);
 
-  // If admin has set final price (paymentBreakdown or adminFinalPrice exists), add 18% GST
   const hasAdminPrice =
     (serviceRequest.paymentBreakdown && serviceRequest.paymentBreakdown.totalCost > 0) ||
     (serviceRequest.adminFinalPrice && serviceRequest.adminFinalPrice > 0);
 
   if (hasAdminPrice) {
-    // Add 18% GST to admin's final price
-    const gstAmount = Math.round(baseAmount * 0.18 * 100) / 100; // Round to 2 decimal places
-    const totalAmount = Math.round((baseAmount + gstAmount) * 100) / 100;
+    // Admin's price already includes 18% GST — extract it, don't add another 18% on top.
+    const totalAmount = Math.round(amount * 100) / 100;
+    const baseAmount = Math.round((totalAmount / 1.18) * 100) / 100;
+    const gstAmount = Math.round((totalAmount - baseAmount) * 100) / 100;
 
     return {
-      baseAmount: Math.round(baseAmount * 100) / 100,
+      baseAmount,
       gstAmount,
       totalAmount,
     };
@@ -90,9 +92,9 @@ const calculateTotalPaymentAmount = (
 
   // If no admin price set, return base amount without GST
   return {
-    baseAmount: Math.round(baseAmount * 100) / 100,
+    baseAmount: Math.round(amount * 100) / 100,
     gstAmount: 0,
-    totalAmount: Math.max(baseAmount, 1),
+    totalAmount: Math.max(amount, 1),
   };
 };
 
