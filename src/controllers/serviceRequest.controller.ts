@@ -1282,6 +1282,13 @@ export const getServiceRequestById = async (req: Request, res: Response) => {
     // Convert to plain object to ensure all nested fields (like verificationTimer) are included
     const requestData = request.toObject ? request.toObject() : request;
 
+    // Sanitize internal margin/split fields from payload served to client
+    if (requestData && requestData.paymentBreakdown) {
+      delete requestData.paymentBreakdown.technicianEarnings;
+      delete requestData.paymentBreakdown.companyCommission;
+      delete requestData.paymentBreakdown.technicianCharges;
+    }
+
     res.status(200).json({ success: true, data: requestData });
   } catch (error: any) {
     console.error('Error fetching service request by ID:', error);
