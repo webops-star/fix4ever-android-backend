@@ -1266,11 +1266,11 @@ export const getServiceRequestById = async (req: Request, res: Response) => {
         .populate('customerId', 'username email phone')
         .populate(
           'assignedTechnician',
-          'pocInfo.fullName pocInfo.phone pocInfo.email pocInfo.correspondenceAddress pocInfo.latitude pocInfo.longitude businessDetails.businessName businessDetails.registeredOfficeAddress businessDetails.website experience rating averageRating totalReviews'
+          'pocInfo.fullName businessDetails.businessName experience rating averageRating totalReviews'
         )
         .populate(
           'assignedVendor',
-          'pocInfo.fullName pocInfo.phone pocInfo.email pocInfo.correspondenceAddress pocInfo.latitude pocInfo.longitude businessDetails.businessName businessDetails.registeredOfficeAddress businessDetails.website experience rating averageRating totalReviews'
+          'pocInfo.fullName businessDetails.businessName experience rating averageRating totalReviews'
         )
         .populate('deviceHandoverImages.customerPickup.uploadedBy', 'personalInfo.fullName')
         .populate('deviceHandoverImages.deliveryToTechnician.uploadedBy', 'personalInfo.fullName')
