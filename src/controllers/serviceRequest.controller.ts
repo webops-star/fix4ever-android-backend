@@ -174,6 +174,20 @@ export const createServiceRequest = async (req: AuthRequest, res: Response) => {
       knowsProblem,
     });
 
+    // Auto-clean user profile phone if user currently has dummy oauth_ placeholder phone
+    if (userPhone && /^\d{10}$/.test(String(userPhone).trim())) {
+      try {
+        const existingUserDoc = await User.findById(customerId);
+        if (existingUserDoc && (!existingUserDoc.phone || existingUserDoc.phone.startsWith('oauth_') || !/^\d{10}$/.test(existingUserDoc.phone))) {
+          existingUserDoc.phone = String(userPhone).trim();
+          await existingUserDoc.save();
+          console.log(`Updated user profile phone for ${customerId} to ${userPhone.trim()}`);
+        }
+      } catch (err: any) {
+        console.error('Failed to auto-update user phone in profile:', err.message);
+      }
+    }
+
     // Enhanced validation for new required fields
     if (!address || !city || !brand || !model || !requestType || !serviceType) {
       return res.status(400).json({
