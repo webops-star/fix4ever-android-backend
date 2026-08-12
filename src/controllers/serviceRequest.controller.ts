@@ -177,7 +177,7 @@ export const createServiceRequest = async (req: AuthRequest, res: Response) => {
     // Auto-clean user profile phone if user currently has dummy oauth_ placeholder phone
     if (userPhone && /^\d{10}$/.test(String(userPhone).trim())) {
       try {
-        const existingUserDoc = await User.findById(customerId);
+        const existingUserDoc = await userModel.findById(customerId);
         if (existingUserDoc && (!existingUserDoc.phone || existingUserDoc.phone.startsWith('oauth_') || !/^\d{10}$/.test(existingUserDoc.phone))) {
           existingUserDoc.phone = String(userPhone).trim();
           await existingUserDoc.save();
