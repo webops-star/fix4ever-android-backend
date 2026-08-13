@@ -331,7 +331,7 @@ export const createCustomerPayment = async (req: AuthRequest, res: Response) => 
 
       // If a payment link already exists, check if it's valid and not expired
       if (existingPayment.paymentLink) {
-        if (existingPayment.status === 'Completed' || existingPayment.status === 'Paid') {
+        if (existingPayment.status === 'Completed') {
           return res.status(400).json({
             success: false,
             message: 'This service request has already been paid',
