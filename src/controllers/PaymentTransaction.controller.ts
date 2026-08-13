@@ -331,100 +331,84 @@ export const createCustomerPayment = async (req: AuthRequest, res: Response) => 
 
       // If a payment link already exists, check if it's valid and not expired
       if (existingPayment.paymentLink) {
-        const now = new Date();
-        const isExpired =
-          existingPayment.paymentRequestExpiresAt && existingPayment.paymentRequestExpiresAt < now;
-        const hasWrongFormat =
-          existingPayment.paymentLink.includes('checkout.cashfree.com') ||
-          existingPayment.paymentLink.includes('/pay/session_') ||
-          existingPayment.paymentLink.includes('paymentpayment') ||
-          existingPayment.paymentLink.includes('www.cashfree.com') ||
-          existingPayment.paymentLink.includes('/checkout/pay/');
-
-        if (isExpired || hasWrongFormat) {
-          console.log(
-            'Existing payment link is expired or has wrong format, creating fresh payment link'
-          );
-
-          // Create a fresh payment link using the same logic as new payments
-          const contactPhone =
-            serviceRequest.requestType === 'other'
-              ? serviceRequest.beneficiaryPhone
-              : serviceRequest.userPhone;
-
-          const contactName =
-            serviceRequest.requestType === 'other'
-              ? serviceRequest.beneficiaryName
-              : serviceRequest.userName;
-
-          // Recalculate amount with GST if needed
-          const amountBreakdown = calculateTotalPaymentAmount(serviceRequest);
-          const freshAmount = amountBreakdown.totalAmount;
-
-          console.log('Creating fresh payment link with contact:', {
-            contactPhone,
-            contactName,
-            baseAmount: amountBreakdown.baseAmount,
-            gstAmount: amountBreakdown.gstAmount,
-            totalAmount: freshAmount,
-          });
-
-          const paymentResult = await cashfreeGateway.createPaymentLink({
-            amount: freshAmount,
-            currency: 'INR',
-            description: `Payment for service request ${serviceRequestId}`,
-            customer: {
-              name:
-                contactName ||
-                serviceRequest.customerId?.username ||
-                serviceRequest.customerId?.name ||
-                'Customer',
-              email: serviceRequest.customerId?.email || 'customer@example.com',
-              contact: contactPhone || serviceRequest.customerId?.phone || '9999999999',
-            },
-            callback_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/callback`,
-          });
-
-          if (!paymentResult) {
-            console.error('Failed to create fresh payment link');
-            return res.status(500).json({
-              success: false,
-              message: 'Failed to generate fresh payment link',
-            });
-          }
-
-          // Update the existing payment transaction with fresh details
-          existingPayment.amount = freshAmount;
-          existingPayment.paymentLink = paymentResult.short_url;
-          existingPayment.paymentSessionId = paymentResult.payment_session_id;
-          existingPayment.gatewayOrderId = paymentResult.id;
-          existingPayment.status = 'Pending';
-          existingPayment.paymentRequestExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
-          existingPayment.gstBreakdown = {
-            baseAmount: amountBreakdown.baseAmount,
-            gstAmount: amountBreakdown.gstAmount,
-            gstRate: amountBreakdown.gstAmount > 0 ? 18 : 0,
-          };
-          await existingPayment.save();
-
-          console.log('Successfully created fresh payment link:', existingPayment.paymentLink);
-          return res.status(200).json({
-            success: true,
-            message: 'Fresh payment link created',
-            data: {
-              transactionId: existingPayment._id,
-              orderId: existingPayment.gatewayOrderId,
-              paymentLink: existingPayment.paymentLink,
-              paymentSessionId: existingPayment.paymentSessionId,
-              status: existingPayment.status,
-            },
+        if (existingPayment.status === 'Completed' || existingPayment.status === 'Paid') {
+          return res.status(400).json({
+            success: false,
+            message: 'This service request has already been paid',
           });
         }
 
-        console.log('Returning existing valid payment link:', existingPayment.paymentLink);
+        // Always create a fresh payment link/session for pending/unpaid orders
+        // to prevent Cashfree session reuse errors on client SDK
+        console.log(
+          'Creating fresh Cashfree payment link and session for request:', serviceRequestId
+        );
+
+        // Create a fresh payment link using the same logic as new payments
+        const contactPhone =
+          serviceRequest.requestType === 'other'
+            ? serviceRequest.beneficiaryPhone
+            : serviceRequest.userPhone;
+
+        const contactName =
+          serviceRequest.requestType === 'other'
+            ? serviceRequest.beneficiaryName
+            : serviceRequest.userName;
+
+        // Recalculate amount with GST if needed
+        const amountBreakdown = calculateTotalPaymentAmount(serviceRequest);
+        const freshAmount = amountBreakdown.totalAmount;
+
+        console.log('Creating fresh payment link with contact:', {
+          contactPhone,
+          contactName,
+          baseAmount: amountBreakdown.baseAmount,
+          gstAmount: amountBreakdown.gstAmount,
+          totalAmount: freshAmount,
+        });
+
+        const paymentResult = await cashfreeGateway.createPaymentLink({
+          amount: freshAmount,
+          currency: 'INR',
+          description: `Payment for service request ${serviceRequestId}`,
+          customer: {
+            name:
+              contactName ||
+              serviceRequest.customerId?.username ||
+              serviceRequest.customerId?.name ||
+              'Customer',
+            email: serviceRequest.customerId?.email || 'customer@example.com',
+            contact: contactPhone || serviceRequest.customerId?.phone || '9999999999',
+          },
+          callback_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/callback`,
+        });
+
+        if (!paymentResult) {
+          console.error('Failed to create fresh payment link');
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to generate fresh payment link',
+          });
+        }
+
+        // Update the existing payment transaction with fresh details
+        existingPayment.amount = freshAmount;
+        existingPayment.paymentLink = paymentResult.short_url;
+        existingPayment.paymentSessionId = paymentResult.payment_session_id;
+        existingPayment.gatewayOrderId = paymentResult.id;
+        existingPayment.status = 'Pending';
+        existingPayment.paymentRequestExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+        existingPayment.gstBreakdown = {
+          baseAmount: amountBreakdown.baseAmount,
+          gstAmount: amountBreakdown.gstAmount,
+          gstRate: amountBreakdown.gstAmount > 0 ? 18 : 0,
+        };
+        await existingPayment.save();
+
+        console.log('Successfully created fresh payment link:', existingPayment.paymentLink);
         return res.status(200).json({
           success: true,
-          message: 'Payment already exists for this service request',
+          message: 'Fresh payment link created',
           data: {
             transactionId: existingPayment._id,
             orderId: existingPayment.gatewayOrderId,
