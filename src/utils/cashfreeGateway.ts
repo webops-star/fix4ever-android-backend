@@ -100,6 +100,10 @@ class CashfreeGateway {
         environment: this.environment,
       });
 
+      // Sanitize customer phone number: Cashfree requires a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9
+      const rawPhone = (request.customer.contact || '').replace(/\D/g, '');
+      const validPhone = /^[6-9]\d{9}$/.test(rawPhone) ? rawPhone : '9999999999';
+
       const orderRequest = {
         order_amount: request.amount,
         order_currency: request.currency || 'INR',
@@ -108,7 +112,7 @@ class CashfreeGateway {
           customer_id: `CUST${Date.now()}${Math.random().toString(36).substr(2, 6)}`,
           customer_name: request.customer.name,
           customer_email: request.customer.email,
-          customer_phone: request.customer.contact,
+          customer_phone: validPhone,
         },
         order_meta: {
           // Route through backend callback first to update DB, then redirect to frontend with order_id
