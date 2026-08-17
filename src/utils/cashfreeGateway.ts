@@ -118,7 +118,6 @@ class CashfreeGateway {
           // Route through backend callback first to update DB, then redirect to frontend with order_id
           return_url: returnUrl,
           notify_url: notifyUrl,
-          payment_methods: 'cc,dc,upi,nb,app,paylater',
         },
         order_expiry_time: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours from now
       };
