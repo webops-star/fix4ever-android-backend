@@ -97,7 +97,11 @@ class CashfreeGateway {
       // IMPORTANT: Always use BACKEND_URL for callbacks, not FRONTEND_URL
       // Backend will process the payment and then redirect to frontend
       const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
-      const returnUrl = `${backendUrl}/api/payment-transactions/callback?order_id=${orderId}`;
+      // No query string here: Cashfree appends its own params to return_url, and a URL
+      // that already contains "?" is a suspected trigger for the HTTP 500 their Android
+      // Drop config endpoint (/order/external/android/config) returns for our sessions.
+      // The native SDK does not use return_url at all — it reports the result in-app.
+      const returnUrl = `${backendUrl}/api/payment-transactions/callback`;
       const notifyUrl = `${backendUrl}/api/payment-transactions/webhook`;
 
       console.log('Payment callback URLs:', {
