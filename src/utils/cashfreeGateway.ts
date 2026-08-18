@@ -4,6 +4,11 @@ import { Cashfree, CFEnvironment } from 'cashfree-pg';
 const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID || '';
 const CASHFREE_SECRET_KEY = process.env.CASHFREE_SECRET_KEY || '';
 const CASHFREE_ENVIRONMENT = process.env.CASHFREE_ENVIRONMENT || 'sandbox'; // 'sandbox' or 'production'
+// The mobile SDK (com.cashfree.pg:api 2.4.0) expects an older API version than the
+// cashfree-pg Node SDK's 2025-01-01 default. Sessions minted at 2025-01-01 make
+// Cashfree's Android Drop config endpoint return HTTP 500 ("Something went wrong!").
+// Override without a code change by setting CASHFREE_API_VERSION.
+const CASHFREE_API_VERSION = process.env.CASHFREE_API_VERSION || '2023-08-01';
 
 // Types
 export type PaymentProvider = 'cashfree';
@@ -62,10 +67,12 @@ class CashfreeGateway {
       CASHFREE_ENVIRONMENT === 'production' ? CFEnvironment.PRODUCTION : CFEnvironment.SANDBOX;
 
     this.cashfree = new Cashfree(cfEnvironment, CASHFREE_APP_ID, CASHFREE_SECRET_KEY);
+    this.cashfree.XApiVersion = CASHFREE_API_VERSION;
 
     console.log('Cashfree Gateway initialized:', {
       environment: CASHFREE_ENVIRONMENT,
       cfEnvironment: cfEnvironment,
+      apiVersion: CASHFREE_API_VERSION,
       hasAppId: !!CASHFREE_APP_ID,
       hasSecretKey: !!CASHFREE_SECRET_KEY,
       sdkVersion: 'cashfree-pg (latest)',
