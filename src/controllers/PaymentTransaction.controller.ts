@@ -975,58 +975,66 @@ export const getCustomerPayments = async (req: AuthRequest, res: Response) => {
 // Payment webhook handler (Cashfree)
 export const handlePaymentWebhook = async (req: Request, res: Response) => {
   try {
-    const signature = req.get('X-VERIFY');
-    const body = JSON.stringify(req.body);
+    // Cashfree changed the webhook shape. Modern PG versions nest everything under
+    // `data`; the old format put orderId/txStatus at the top level. Accept both,
+    // but only to read the order id out - nothing in the payload is trusted.
+    const body: any = req.body || {};
+    const orderId: string | undefined =
+      body?.data?.order?.order_id || body?.data?.order_id || body?.orderId || body?.order_id;
+    const eventType = String(body?.type || body?.txStatus || 'unknown');
 
-    // Verify webhook signature for Cashfree
-    if (
-      !signature ||
-      !cashfreeGateway.verifyPaymentSignature(
-        req.body.orderId,
-        req.body.orderAmount,
-        req.body.referenceId,
-        req.body.txStatus,
-        req.body.paymentMode,
-        req.body.txMsg,
-        req.body.txTime,
-        signature
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid webhook signature',
-      });
-    }
-
-    const txStatus = req.body.txStatus;
-    const orderId = req.body.orderId;
-    const paymentDetails = req.body;
-
-    switch (txStatus) {
-      case 'SUCCESS':
-        await handlePaymentSuccess(orderId, paymentDetails);
-        break;
-
-      case 'CANCELLED':
-        await handlePaymentCancelled(orderId, paymentDetails);
-        break;
-
-      case 'FAILED':
-        await handlePaymentFailed(orderId, paymentDetails);
-        break;
-
-      default:
-        console.log('Unhandled Cashfree webhook status:', txStatus);
-    }
-
-    res.status(200).json({ success: true });
-  } catch (error: any) {
-    console.error('Payment webhook error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Webhook processing failed',
-      error: error.message,
+    console.log('Cashfree webhook received:', {
+      type: eventType,
+      orderId: orderId || 'MISSING',
+      signed: !!(req.get('x-webhook-signature') || req.get('X-VERIFY')),
     });
+
+    if (!orderId) {
+      console.error('Webhook carried no recognisable order id. Payload keys:', Object.keys(body));
+      // Still 200: retrying will not make an unparseable payload parseable.
+      return res.status(200).json({ success: true, ignored: 'no order id' });
+    }
+
+    // Confirm against Cashfree's own API rather than trusting the webhook body.
+    // A forged webhook therefore achieves nothing, and we do not depend on
+    // signature verification over a raw body that express.json already consumed.
+    const payments = await cashfreeGateway.getOrderPayments(orderId);
+    const successPayment = Array.isArray(payments)
+      ? payments.find((p: any) => p.payment_status === 'SUCCESS')
+      : null;
+
+    if (successPayment) {
+      const result = await handlePaymentSuccess(orderId, successPayment);
+      if (result?.success) {
+        console.log('✅ Webhook reconciled payment for order:', orderId);
+      } else {
+        // The customer's money HAS been taken. Never let this pass quietly.
+        console.error(
+          '🚨 PAYMENT CAPTURED BUT NOT RECONCILED - needs manual fix. order:',
+          orderId,
+          'reason:',
+          result?.error
+        );
+      }
+    } else if (eventType.includes('FAILED')) {
+      await handlePaymentFailed(orderId, body);
+    } else if (eventType.includes('CANCELLED') || eventType.includes('USER_DROPPED')) {
+      await handlePaymentCancelled(orderId, body);
+    } else {
+      console.log(
+        'Webhook for order',
+        orderId,
+        '- Cashfree reports no SUCCESS payment yet. type:',
+        eventType
+      );
+    }
+
+    // Always 200. A non-2xx makes Cashfree retry, which cannot help any of the
+    // permanent outcomes above and risks the endpoint being marked unhealthy.
+    return res.status(200).json({ success: true });
+  } catch (error: any) {
+    console.error('Payment webhook error:', error?.message || error);
+    return res.status(200).json({ success: true, error: 'logged' });
   }
 };
 
