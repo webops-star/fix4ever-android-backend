@@ -105,6 +105,127 @@ router.get('/checkout/:orderId', async (req, res) => {
   }
 });
 
+/**
+ * Android hosted payment link.
+ *
+ * Returns a Cashfree-hosted payment link URL for an order that /pay already created.
+ * The Android app opens this in a WebView. Used instead of /checkout/:orderId because
+ * that page is served from our Railway domain, which Cashfree refuses with
+ * "is not enabled or approved" until the domain is Website-whitelisted. A payment link
+ * lives on Cashfree's own domain, so nothing needs approving.
+ *
+ * link_id is deterministic - 'LNK' + our order id - so nothing extra is stored and the
+ * link can always be found again from the order id alone.
+ */
+router.get('/pay-link/:orderId', authenticateToken, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const PaymentTransaction = require('../models/PaymentTransaction.model').default;
+    const ServiceRequest = require('../models/serviceRequest.model').default;
+    const cashfreeGateway = require('../utils/cashfreeGateway').default;
+
+    const txn = await PaymentTransaction.findOne({ gatewayOrderId: orderId });
+    if (!txn) {
+      return res.status(404).json({ success: false, message: 'Payment transaction not found' });
+    }
+
+    // Same contact rules the order used, so the link shows the same customer.
+    const serviceRequest = await ServiceRequest.findById(txn.serviceRequestId).populate('customerId');
+    const contactPhone =
+      serviceRequest?.requestType === 'other'
+        ? serviceRequest?.beneficiaryPhone
+        : serviceRequest?.userPhone;
+    const contactName =
+      serviceRequest?.requestType === 'other'
+        ? serviceRequest?.beneficiaryName
+        : serviceRequest?.userName;
+
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
+    const linkId = `LNK${orderId}`;
+
+    const link = await cashfreeGateway.createHostedPaymentLink({
+      linkId,
+      amount: txn.amount,
+      purpose: txn.paymentDescription || `Payment for service request ${txn.serviceRequestId}`,
+      customer: {
+        name: contactName || serviceRequest?.customerId?.username || 'Customer',
+        email: serviceRequest?.customerId?.email || 'customer@example.com',
+        contact: contactPhone || serviceRequest?.customerId?.phone || '9999999999',
+      },
+      returnUrl: `${backendUrl}/api/payment-transactions/callback`,
+      notifyUrl: `${backendUrl}/api/payment-transactions/webhook`,
+    });
+
+    // Replace the old dead paymentLink value with a real, working URL.
+    txn.paymentLink = link.link_url;
+    await txn.save();
+
+    return res.status(200).json({
+      success: true,
+      data: { linkUrl: link.link_url, linkId: link.link_id, orderId },
+    });
+  } catch (error: any) {
+    console.error('pay-link error:', error?.message || error);
+    return res
+      .status(500)
+      .json({ success: false, message: error?.message || 'Could not create payment link' });
+  }
+});
+
+/**
+ * Confirm a hosted payment link was actually paid, and reconcile it.
+ *
+ * The app calls this after its WebView lands on our return_url. Nothing is trusted from
+ * the client: we ask Cashfree which orders the link produced, then whether any of those
+ * orders has a SUCCESS payment, and only then reconcile.
+ */
+router.get('/verify-link/:orderId', authenticateToken, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const cashfreeGateway = require('../utils/cashfreeGateway').default;
+    const linkId = `LNK${orderId}`;
+
+    const linkOrders = await cashfreeGateway.getLinkOrders(linkId);
+
+    for (const linkOrder of linkOrders) {
+      const cfOrderId = linkOrder?.order_id;
+      if (!cfOrderId) continue;
+
+      const payments = await cashfreeGateway.getOrderPayments(cfOrderId);
+      const successPayment = Array.isArray(payments)
+        ? payments.find((p: any) => p.payment_status === 'SUCCESS')
+        : null;
+
+      if (successPayment) {
+        // Reconcile against OUR order id, which is what the transaction is keyed on.
+        const result = await processPaymentSuccess(orderId, successPayment);
+        if (!result.success) {
+          console.error(
+            '🚨 PAYMENT CAPTURED BUT NOT RECONCILED - needs manual fix. order:',
+            orderId,
+            'link:',
+            linkId,
+            'reason:',
+            result.error
+          );
+        }
+        return res.status(200).json({
+          success: true,
+          order_status: 'PAID',
+          reconciled: result.success,
+        });
+      }
+    }
+
+    return res.status(200).json({ success: true, order_status: 'PENDING' });
+  } catch (error: any) {
+    console.error('verify-link error:', error?.message || error);
+    return res
+      .status(500)
+      .json({ success: false, message: error?.message || 'Could not verify payment link' });
+  }
+});
+
 // Customer payment endpoints
 router.post(
   '/pay',

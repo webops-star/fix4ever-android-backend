@@ -177,6 +177,107 @@ class CashfreeGateway {
   }
 
   /**
+   * Create a Cashfree hosted Payment Link.
+   *
+   * Used only by the Android app. Cashfree's native Android SDK is unusable for this
+   * account (GET /order/external/android/config returns HTTP 500 on every flow) and our
+   * own hosted checkout page is refused because the Railway domain is not
+   * Website-whitelisted. A payment link is served from Cashfree's own domain, so it
+   * needs no whitelisting at all - verified by paying a dashboard-created link on the
+   * same device.
+   *
+   * `linkId` must be alphanumeric plus - and _, max 50 chars.
+   */
+  async createHostedPaymentLink(request: {
+    linkId: string;
+    amount: number;
+    purpose: string;
+    customer: { name: string; email: string; contact: string };
+    returnUrl: string;
+    notifyUrl: string;
+  }): Promise<{ link_id: string; link_url: string }> {
+    try {
+      // Same sanitisation as createPaymentLink: Cashfree needs a real 10-digit Indian
+      // mobile number starting 6-9.
+      const rawPhone = (request.customer.contact || '').replace(/\D/g, '');
+      const validPhone = /^[6-9]\d{9}$/.test(rawPhone) ? rawPhone : '9999999999';
+
+      const linkRequest = {
+        link_id: request.linkId,
+        link_amount: request.amount,
+        link_currency: 'INR',
+        link_purpose: request.purpose,
+        customer_details: {
+          customer_phone: validPhone,
+          customer_email: request.customer.email,
+          customer_name: request.customer.name,
+        },
+        link_partial_payments: false,
+        link_auto_reminders: false,
+        // Cashfree sends the customer here once the link is paid. The app watches for
+        // this URL in its WebView to know the payment finished.
+        link_meta: {
+          return_url: request.returnUrl,
+          notify_url: request.notifyUrl,
+        },
+        // We show the link ourselves inside the app, so no SMS/email needed.
+        link_notify: { send_sms: false, send_email: false },
+        link_expiry_time: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      console.log('Creating Cashfree payment link:', JSON.stringify(linkRequest, null, 2));
+
+      const response = await this.cashfree.PGCreateLink(linkRequest as any);
+
+      if (!response.data?.link_url) {
+        throw new Error('Cashfree did not return a link_url');
+      }
+
+      console.log('Created payment link:', response.data.link_id, response.data.link_url);
+
+      return {
+        link_id: response.data.link_id || request.linkId,
+        link_url: response.data.link_url,
+      };
+    } catch (error: any) {
+      const detail = error.response?.data;
+      console.error('Cashfree Create Payment Link Error:', detail || error.message);
+
+      // link_id is deterministic, so a retry for the same order hits "already exists".
+      // Reuse the existing link rather than failing the customer's payment.
+      try {
+        const existing = await this.cashfree.PGFetchLink(request.linkId);
+        if (existing.data?.link_url) {
+          console.log('Reusing existing payment link for', request.linkId);
+          return {
+            link_id: existing.data.link_id || request.linkId,
+            link_url: existing.data.link_url,
+          };
+        }
+      } catch (fetchError: any) {
+        console.error(
+          'Could not fetch existing link either:',
+          fetchError.response?.data || fetchError.message
+        );
+      }
+
+      throw new Error(`Payment link creation failed: ${detail?.message || error.message}`);
+    }
+  }
+
+  /** Orders created against a payment link. Used to confirm a link was actually paid. */
+  async getLinkOrders(linkId: string): Promise<any[]> {
+    try {
+      const response = await this.cashfree.PGLinkFetchOrders(linkId);
+      console.log('Link orders for', linkId, ':', JSON.stringify(response.data));
+      return Array.isArray(response.data) ? response.data : [];
+    } catch (error: any) {
+      console.error('Cashfree Link Orders Error:', error.response?.data || error.message);
+      throw new Error(`Link orders fetch failed: ${error.response?.data?.message || error.message}`);
+    }
+  }
+
+  /**
    * Check payment status using official SDK
    */
   async getPaymentStatus(orderId: string): Promise<any> {

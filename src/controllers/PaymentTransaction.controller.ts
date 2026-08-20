@@ -983,9 +983,19 @@ export const handlePaymentWebhook = async (req: Request, res: Response) => {
       body?.data?.order?.order_id || body?.data?.order_id || body?.orderId || body?.order_id;
     const eventType = String(body?.type || body?.txStatus || 'unknown');
 
+    // Android hosted payment links create their own Cashfree order, whose order_id will
+    // not match our PaymentTransaction. The link id is deterministic ('LNK' + our order
+    // id), so strip the prefix to recover the id our transaction is keyed on. Without
+    // this, a link payment would be captured and never reconciled.
+    const linkId: string | undefined = body?.data?.link?.link_id;
+    const reconcileKey =
+      linkId && linkId.startsWith('LNK') ? linkId.substring(3) : (orderId as string);
+
     console.log('Cashfree webhook received:', {
       type: eventType,
       orderId: orderId || 'MISSING',
+      linkId: linkId || 'none',
+      reconcileKey,
       signed: !!(req.get('x-webhook-signature') || req.get('X-VERIFY')),
     });
 
@@ -1004,9 +1014,9 @@ export const handlePaymentWebhook = async (req: Request, res: Response) => {
       : null;
 
     if (successPayment) {
-      const result = await handlePaymentSuccess(orderId, successPayment);
+      const result = await handlePaymentSuccess(reconcileKey, successPayment);
       if (result?.success) {
-        console.log('✅ Webhook reconciled payment for order:', orderId);
+        console.log('✅ Webhook reconciled payment for order:', reconcileKey);
       } else {
         // The customer's money HAS been taken. Never let this pass quietly.
         console.error(
