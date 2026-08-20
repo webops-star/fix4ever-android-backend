@@ -34,6 +34,77 @@ router.get('/test-config', (req, res) => {
   });
 });
 
+/**
+ * Serves a minimal page that hands an existing order's payment_session_id to
+ * Cashfree's hosted Web Checkout (JS SDK v3).
+ *
+ * Why this exists: Cashfree's native Android Drop-in config endpoint
+ * (GET /order/external/android/config) returns HTTP 500 for this account, so all
+ * three native SDK flows fail. Cashfree confirmed Drop-in is deprecated and told us
+ * to use Web Checkout instead (ticket 8240311). The Android app opens this page in a
+ * WebView; iOS keeps using the native SDK, which works.
+ *
+ * Deliberately reuses the order already created by /pay, so order_id,
+ * PaymentTransaction and webhook reconciliation are all unchanged.
+ */
+router.get('/checkout/:orderId', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const PaymentTransaction = require('../models/PaymentTransaction.model').default;
+    const txn = await PaymentTransaction.findOne({ gatewayOrderId: orderId });
+
+    if (!txn || !txn.paymentSessionId) {
+      console.error('Web checkout requested for unknown order:', orderId);
+      return res
+        .status(404)
+        .set('Content-Type', 'text/html')
+        .send('<!doctype html><meta charset="utf-8"><p>Payment session not found.</p>');
+    }
+
+    const mode =
+      (process.env.CASHFREE_ENVIRONMENT || 'sandbox') === 'production' ? 'production' : 'sandbox';
+
+    // JSON.stringify keeps these safely quoted inside the inline script.
+    const sessionLiteral = JSON.stringify(txn.paymentSessionId);
+    const modeLiteral = JSON.stringify(mode);
+
+    console.log('Serving web checkout page for order:', orderId, 'mode:', mode);
+
+    const html = [
+      '<!doctype html>',
+      '<html><head><meta charset="utf-8">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">',
+      '<title>Secure Checkout</title>',
+      '<script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>',
+      '<style>body{margin:0;font-family:-apple-system,Roboto,Helvetica,Arial,sans-serif;',
+      'display:flex;align-items:center;justify-content:center;height:100vh;',
+      'color:#11385b;text-align:center;padding:24px}</style>',
+      '</head><body>',
+      '<div id="msg">Opening secure checkout&hellip;</div>',
+      '<script>',
+      '(function(){',
+      '  function show(t){ document.getElementById("msg").textContent = t; }',
+      '  try {',
+      '    var cf = Cashfree({ mode: ' + modeLiteral + ' });',
+      '    cf.checkout({ paymentSessionId: ' + sessionLiteral + ', redirectTarget: "_self" })',
+      '      .then(function(r){ if (r && r.error) { show(r.error.message || "Checkout could not be opened."); } })',
+      '      .catch(function(e){ show((e && e.message) ? e.message : String(e)); });',
+      '  } catch (e) { show((e && e.message) ? e.message : String(e)); }',
+      '})();',
+      '</script>',
+      '</body></html>',
+    ].join('\n');
+
+    return res.status(200).set('Content-Type', 'text/html').send(html);
+  } catch (error: any) {
+    console.error('Web checkout page error:', error?.message || error);
+    return res
+      .status(500)
+      .set('Content-Type', 'text/html')
+      .send('<!doctype html><meta charset="utf-8"><p>Could not open checkout.</p>');
+  }
+});
+
 // Customer payment endpoints
 router.post(
   '/pay',
