@@ -191,6 +191,31 @@ export const createCustomerPayment = async (req: AuthRequest, res: Response) => 
       } else {
         console.warn('Invalid warranty plan details provided:', { warrantyPlanName, warrantyAmount });
       }
+    } else if (warrantyAddonSelected === false && serviceRequest.warrantyAddonSelected) {
+      // The customer had picked a warranty earlier, backed out, and has now chosen
+      // "No Warranty". Nothing used to clear these fields, so the old selection stuck on
+      // the ServiceRequest and calculateTotalPaymentAmount kept charging for it.
+      // Only clear while the warranty is still unpaid - never touch one that is already
+      // active, expired, voided or has a claim against it.
+      if (
+        serviceRequest.warrantyStatus === 'pending_activation' ||
+        serviceRequest.warrantyStatus === 'not_purchased'
+      ) {
+        serviceRequest.warrantyAddonSelected = false;
+        serviceRequest.warrantyPlanName = 'None';
+        serviceRequest.warrantyAmount = 0;
+        serviceRequest.warrantyValidityDays = 0;
+        serviceRequest.warrantyStatus = 'not_purchased';
+        await serviceRequest.save();
+        console.log('Cleared previously selected warranty for request:', serviceRequestId);
+      } else {
+        console.warn(
+          'Warranty deselected but NOT cleared - status is',
+          serviceRequest.warrantyStatus,
+          'for request',
+          serviceRequestId
+        );
+      }
     }
 
     // Calculate the correct total amount (admin price + GST if applicable)
